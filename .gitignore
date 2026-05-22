@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 输出报告
+output/
+
+# 临时/测试文件
+test_chart.html
+test_click.html
+
+# 开发笔记
+.learnings/
+
+# 系统文件
+.DS_Store
+Thumbs.db
