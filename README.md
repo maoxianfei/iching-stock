@@ -82,6 +82,11 @@ iching-stock/
 │   ├── output.py                   #   控制台表格打印 + Excel 导出
 │   └── scheduler.py               #   定时调度器（交易日 14:30 自动触发）
 │
+├── webui/                          # Web Dashboard（统一前端）
+│   ├── app.py                       #   Flask 主应用（SSE 路由 + 子进程管理）
+│   └── templates/
+│       └── index.html               #   单页三 Tab Dashboard（原生 HTML/CSS/JS）
+│
 ├── output/                         # 分析报告 & 导出文件（gitignore）
 ├── .gitignore
 └── README.md
@@ -200,6 +205,32 @@ python backtest/runner.py batch \
   --end 20260531 \
   --offset 1
 ```
+
+---
+
+## Web Dashboard（统一前端）
+
+一站式 Web 界面，无需记忆 CLI 参数，三个子系统 Tab 一键切换。
+
+```bash
+# 安装依赖
+pip install flask
+
+# 启动 Dashboard
+python webui/app.py
+
+# 浏览器打开 → http://localhost:5000
+```
+
+**功能覆盖：**
+
+| Tab | 功能 | 操作 |
+|-----|------|------|
+| 🔮 卦象分析 | 单股深度分析 | 填代码 → 选周期 → 点击执行，iframe 内嵌 Chart.js 报告 |
+| 📊 卦象筛选 | 全市场 / 单股扫描 | 选模式 → 填参数 → SSE 实时进度 → 统计卡片 |
+| ⚡ 策略回测 | 实时筛选 / 单次回测 / 批量回测 | 选策略 → 填日期 → 胜率/收益统计 + 表格 |
+
+**技术实现：** Flask + SSE (Server-Sent Events) 实时推送 + 原生 HTML/CSS/JS，零前端构建工具。
 
 ---
 

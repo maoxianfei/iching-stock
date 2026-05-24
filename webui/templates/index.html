@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>大股票系统 Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117; --bg-card: #1a1d27; --bg-input: #242736;
+    --border: #2a2e3a; --text: #c9d1d9; --text-dim: #6e7681;
+    --accent: #58a6ff; --accent-glow: rgba(88,166,255,0.15);
+    --green: #3fb950; --red: #f85149; --yellow: #d2991d;
+    --radius: 8px;
+    --font-mono: 'Cascadia Code','Fira Code',Consolas,monospace;
+    --font-sans: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  }
+  * { margin:0;padding:0;box-sizing:border-box; }
+  body { background:var(--bg);color:var(--text);font-family:var(--font-sans);min-height:100vh;display:flex;flex-direction:column; }
+
+  .header { background:var(--bg-card);border-bottom:1px solid var(--border);padding:14px 24px;display:flex;align-items:center;gap:16px;flex-shrink:0; }
+  .header .logo { font-size:22px;font-weight:700;color:var(--accent);letter-spacing:-0.5px; }
+  .header .subtitle { font-size:13px;color:var(--text-dim); }
+
+  .tab-nav { display:flex;background:var(--bg-card);border-bottom:1px solid var(--border);padding:0 24px;flex-shrink:0; }
+  .tab-btn { background:none;border:none;color:var(--text-dim);font-size:14px;font-family:var(--font-sans);padding:12px 20px;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;position:relative;top:1px; }
+  .tab-btn:hover { color:var(--text); }
+  .tab-btn.active { color:var(--accent);border-bottom-color:var(--accent); }
+
+  .content { flex:1;display:flex;flex-direction:column;overflow:hidden; }
+  .tab-panel { display:none;flex:1;overflow:auto;padding:20px 24px;gap:20px; }
+  .tab-panel.active { display:flex; }
+  .tab-panel.cols { flex-direction:row; }
+  .tab-panel.rows { flex-direction:column; }
+
+  .form-card { background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;display:flex;flex-direction:column;gap:14px; }
+  .form-card h3 { font-size:15px;font-weight:600;color:var(--text);margin-bottom:2px; }
+  .form-row { display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end; }
+  .form-row.top { align-items:flex-start; }
+  .form-group { display:flex;flex-direction:column;gap:4px; }
+  .form-group label { font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.5px; }
+  .form-group input,.form-group select { background:var(--bg-input);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:14px;font-family:var(--font-sans);outline:none;transition:border 0.2s; }
+  .form-group input:focus,.form-group select:focus { border-color:var(--accent); }
+  .form-group input { width:160px; }
+  .form-group select { min-width:140px; }
+  .form-group input[type="checkbox"] { width:auto;accent-color:var(--accent); }
+  .form-group input[type="date"] { width:170px;color-scheme:dark; }
+
+  .btn { background:var(--accent);color:#fff;border:none;padding:8px 24px;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;transition:all 0.2s;font-family:var(--font-sans); }
+  .btn:hover { background:#4090e0;box-shadow:0 0 12px var(--accent-glow); }
+  .btn:disabled { opacity:0.4;cursor:not-allowed;box-shadow:none; }
+  .btn-add { font-size:14px;padding:8px 16px;white-space:nowrap; }
+  .btn-scan { background:var(--green); }
+  .btn-scan:hover { background:#2ea040;box-shadow:0 0 12px rgba(63,185,80,0.3); }
+  .btn-filter { background:#d2991d; }
+  .btn-filter:hover { background:#b8860b;box-shadow:0 0 12px rgba(210,153,29,0.3); }
+
+  .hidden { display:none !important; }
+
+  /* ── Hexagram chips ── */
+  .hex-chips { display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;max-height:120px;overflow-y:auto; }
+  .hex-chip { background:var(--bg-input);border:1px solid var(--border);color:var(--text-dim);padding:3px 10px;border-radius:14px;font-size:12px;cursor:pointer;transition:all 0.15s;white-space:nowrap;user-select:none; }
+  .hex-chip:hover { border-color:var(--accent);color:var(--text); }
+  .hex-chip.selected { background:rgba(88,166,255,0.2);border-color:var(--accent);color:var(--accent); }
+  .hex-tags { display:flex;flex-wrap:wrap;gap:6px;min-height:28px;align-items:flex-start;padding:4px 0; }
+  .hex-tag { background:rgba(88,166,255,0.15);border:1px solid var(--accent);color:var(--accent);padding:4px 10px;border-radius:14px;font-size:12px;display:inline-flex;align-items:center;gap:6px;cursor:default; }
+  .hex-tag .remove { cursor:pointer;font-size:14px;line-height:1;opacity:0.6; }
+  .hex-tag .remove:hover { opacity:1;color:var(--red); }
+  .hex-empty { color:var(--text-dim);font-size:12px;font-style:italic; }
+
+  /* ── Filter checkboxes ── */
+  .filter-checks { display:flex;flex-wrap:wrap;gap:16px; }
+  .filter-checks label { display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer;user-select:none; }
+  .filter-checks input { accent-color:var(--accent);width:15px;height:15px; }
+
+  /* ── Pool status ── */
+  .pool-status { display:flex;gap:12px;align-items:center;padding:8px 14px;background:var(--bg-input);border-radius:6px;font-size:13px; }
+  .pool-status .dot { width:8px;height:8px;border-radius:50%;background:var(--text-dim); }
+  .pool-status .dot.active { background:var(--green); }
+  .pool-count { font-weight:600;color:var(--accent);font-family:var(--font-mono); }
+
+  .terminal {
+    background:#0a0c12;border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px;font-family:var(--font-mono);font-size:13px;line-height:1.55;
+    color:#a5b4c4;overflow-y:auto;white-space:pre-wrap;word-break:break-all;
+    flex:1;min-height:120px;max-height:300px;
+  }
+  .terminal .dim { color:var(--text-dim); }
+  .terminal .warn { color:var(--yellow); }
+  .terminal .err  { color:var(--red); }
+  .terminal .ok   { color:var(--green); }
+
+  .result-area { display:flex;flex-direction:column;gap:16px;flex:1;min-width:0; }
+  .result-area.report { flex:2; }
+  .report-iframe { flex:1;border:1px solid var(--border);border-radius:var(--radius);background:#fff;min-height:400px; }
+
+  .stat-cards { display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px; }
+  .stat-card { background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:14px;text-align:center; }
+  .stat-card .value { font-size:26px;font-weight:700;font-family:var(--font-mono); }
+  .stat-card .label { font-size:11px;color:var(--text-dim);margin-top:4px; }
+  .stat-card .value.green { color:var(--green); }
+  .stat-card .value.red { color:var(--red); }
+  .stat-card .value.blue { color:var(--accent); }
+  .stat-card .value.yellow { color:var(--yellow); }
+
+  .table-wrap { overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card); }
+  table { width:100%;border-collapse:collapse;font-size:13px; }
+  th,td { padding:7px 10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap; }
+  th { color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;background:var(--bg-input);position:sticky;top:0; }
+  tr:hover td { background:rgba(88,166,255,0.04); }
+  td.green { color:var(--green); } td.red { color:var(--red); }
+
+  .left-col { flex:1;display:flex;flex-direction:column;gap:16px;min-width:320px; }
+  .right-col { flex:2;display:flex;flex-direction:column;gap:16px;min-width:0; }
+
+  .status { font-size:12px;padding:3px 10px;border-radius:12px;display:inline-block; }
+  .status.idle { background:var(--bg-input);color:var(--text-dim); }
+  .status.running { background:rgba(88,166,255,0.15);color:var(--accent); }
+  .status.done { background:rgba(63,185,80,0.15);color:var(--green); }
+  .status.error { background:rgba(248,81,73,0.15);color:var(--red); }
+
+  ::-webkit-scrollbar { width:6px;height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--border);border-radius:3px; }
+
+  /* ── Section divider ── */
+  .section-label { font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;padding:4px 0;border-bottom:1px solid var(--border);margin-top:4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <span class="logo">☰ 大股票系统</span>
+  <span class="subtitle">— 易经六十四卦 · 策略回测 · 统一工作台</span>
+</div>
+
+<div class="tab-nav">
+  <button class="tab-btn active" data-tab="analyzer">🔮 卦象分析</button>
+  <button class="tab-btn" data-tab="screener">📊 卦象筛选</button>
+  <button class="tab-btn" data-tab="backtest">⚡ 策略回测</button>
+</div>
+
+<div class="content">
+
+  <!-- ═══════════════ Tab 1: 卦象分析 ═══════════════ -->
+  <div id="tab-analyzer" class="tab-panel cols active">
+    <div class="left-col">
+      <div class="form-card">
+        <h3>运行参数</h3>
+        <div class="form-row">
+          <div class="form-group"><label>股票代码</label><input type="text" id="a-symbol" placeholder="600519" value="600519"></div>
+          <div class="form-group"><label>分析周期</label><select id="a-interval"><option value="monthly">月线</option><option value="weekly">周线</option></select></div>
+          <div class="form-group"><label>K线数量</label><input type="number" id="a-count" value="24" min="6" max="100"></div>
+        </div>
+        <button class="btn" id="a-run" onclick="runAnalyzer()">▶ 开始分析</button>
+        <div class="status idle" id="a-status">就绪</div>
+      </div>
+      <div class="terminal" id="a-terminal"><span class="dim">等待执行...</span></div>
+    </div>
+    <div class="result-area report" id="a-result">
+      <div style="color:var(--text-dim);text-align:center;padding:60px 0;">点击「开始分析」查看结果<br><small>Chart.js 交互报告将在此处内嵌预览</small></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ Tab 2: 卦象筛选 (三阶段工作流) ═══════════════ -->
+  <div id="tab-screener" class="tab-panel rows">
+
+    <!-- ── 阶段 1: 卦象选择 ── -->
+    <div class="form-card">
+      <h3>❶ 卦象选择</h3>
+      <div class="section-label">点击下方芯片选取卦象（可多选），已选卦象显示在下方</div>
+      <div class="hex-tags" id="s-selected-tags">
+        <span class="hex-empty">尚未选择卦象，请点击下方芯片</span>
+      </div>
+      <details open>
+        <summary style="font-size:12px;color:var(--text-dim);cursor:pointer;padding:4px 0;">展开全部 64 卦</summary>
+        <div class="hex-chips" id="s-hex-chips"></div>
+      </details>
+    </div>
+
+    <!-- ── 阶段 2: 扫描入池 ── -->
+    <div class="form-card">
+      <h3>❷ 扫描入池</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label>时间窗口（天）</label>
+          <input type="number" id="s-days" value="365" min="30" max="730" style="width:120px;">
+        </div>
+        <div class="form-group">
+          <label>扫描周期</label>
+          <div class="filter-checks">
+            <label><input type="checkbox" id="s-scan-daily" checked> 日线</label>
+            <label><input type="checkbox" id="s-scan-weekly" checked> 周线</label>
+            <label><input type="checkbox" id="s-scan-monthly" checked> 月线</label>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button class="btn btn-scan" id="s-scan" onclick="runScan()">▶ 扫描入池</button>
+        <div class="pool-status" id="s-pool-status">
+          <span class="dot"></span>
+          <span>股票池: <span class="pool-count" id="s-pool-count">0</span> 只</span>
+          <span style="color:var(--text-dim);font-size:11px;" id="s-pool-time"></span>
+        </div>
+        <div class="status idle" id="s-scan-status">就绪</div>
+      </div>
+    </div>
+
+    <!-- ── 阶段 3: 组合条件筛选 ── -->
+    <div class="form-card">
+      <h3>❸ 组合条件筛选 <span style="font-size:11px;color:var(--text-dim);font-weight:400;">（可多选，AND 逻辑，可反复切换）</span></h3>
+      <div class="filter-checks">
+        <label><input type="checkbox" id="f-vol120" checked onchange="autoFilter()"> 成交量 ≥ 120日均量</label>
+        <label><input type="checkbox" id="f-vol60" checked onchange="autoFilter()"> 成交量 ≥ 60日均量</label>
+        <label><input type="checkbox" id="f-sig-daily" onchange="autoFilter()"> 日线级别卦象信号</label>
+        <label><input type="checkbox" id="f-sig-weekly" onchange="autoFilter()"> 周线级别卦象信号</label>
+        <label><input type="checkbox" id="f-sig-monthly" onchange="autoFilter()"> 月线级别卦象信号</label>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;">
+        <button class="btn btn-filter" id="s-filter" onclick="runFilter()">▶ 执行筛选</button>
+        <span style="font-size:13px;color:var(--text-dim);" id="s-filter-info">共 0 只 · 应用中...</span>
+      </div>
+    </div>
+
+    <!-- ── 终端 & 结果 ── -->
+    <div class="terminal" id="s-terminal"><span class="dim">等待扫描入池...</span></div>
+    <div id="s-result"></div>
+  </div>
+
+  <!-- ═══════════════ Tab 3: 策略回测 ═══════════════ -->
+  <div id="tab-backtest" class="tab-panel rows">
+    <div class="form-card">
+      <h3>回测参数</h3>
+      <div class="form-row">
+        <div class="form-group"><label>操作模式</label><select id="b-mode" onchange="toggleBacktestMode()"><option value="screen">实时筛选</option><option value="backtest">单次回测</option><option value="batch">批量回测</option></select></div>
+        <div class="form-group"><label>策略</label><select id="b-strategy"><option value="ma_convergence">MA 粘合</option><option value="yijing">易经形态</option></select></div>
+        <div class="form-group" id="bg-screen-date"><label>筛选日期</label><input type="date" id="b-screen-date"></div>
+        <div class="form-group hidden" id="bg-verify-date"><label>验证日期 (可选)</label><input type="date" id="b-verify-date"></div>
+        <div class="form-group hidden" id="bg-start"><label>开始日期</label><input type="date" id="b-start-date"></div>
+        <div class="form-group hidden" id="bg-end"><label>结束日期</label><input type="date" id="b-end-date"></div>
+        <div class="form-group hidden" id="bg-offset"><label>验证偏移(天)</label><input type="number" id="b-offset" value="1" min="1" max="10"></div>
+        <div class="form-group"><label>抽样数量</label><input type="number" id="b-sample" placeholder="全量" min="10"></div>
+      </div>
+      <button class="btn" id="b-run" onclick="runBacktest()">▶ 开始执行</button>
+      <div class="status idle" id="b-status">就绪</div>
+    </div>
+    <div class="terminal" id="b-terminal"><span class="dim">等待执行...</span></div>
+    <div id="b-result"></div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// 64 卦名字 (binary index 0-63)
+// ═══════════════════════════════════════════════════════
+const HEXAGRAM_NAMES = [
+  "坤为地","地雷复","地水师","地泽临","地山谦","地火明夷","地风升","地天泰",
+  "雷地豫","震为雷","雷水解","雷泽归妹","雷山小过","雷火丰","雷风恒","雷天大壮",
+  "水地比","水雷屯","坎为水","水泽节","水山蹇","水火既济","水风井","水天需",
+  "泽地萃","泽雷随","泽水困","兑为泽","泽山咸","泽火革","泽风大过","泽天夬",
+  "山地剥","山雷颐","山水蒙","山泽损","艮为山","山火贲","山风蛊","山天大畜",
+  "火地晋","火雷噬嗑","火水未济","火泽睽","火山旅","离为火","火风鼎","火天大有",
+  "风地观","风雷益","风水涣","风泽中孚","风山渐","风火家人","巽为风","风天小畜",
+  "天地否","天雷无妄","天水讼","天泽履","天山遁","天火同人","天风姤","乾为天",
+];
+
+// ═══════════════════════════════════════════════════════
+// Shared: Utilities
+// ═══════════════════════════════════════════════════════
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════
+// Tab 切换
+// ═══════════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// Tab 1: 卦象分析
+// ═══════════════════════════════════════════════════════
+function runAnalyzer() {
+  const symbol = document.getElementById('a-symbol').value.trim();
+  const interval = document.getElementById('a-interval').value;
+  const count = document.getElementById('a-count').value;
+  if (!symbol) { alert('请输入股票代码'); return; }
+
+  fetch('/api/analyzer/run', {
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({symbol,interval,count:parseInt(count)}),
+  }).then(resp => {
+    if(!resp.ok) return resp.json().then(d => {throw new Error(d.error)});
+    const reader = resp.body.getReader(), decoder = new TextDecoder();
+    const terminal = document.getElementById('a-terminal');
+    const statusEl = document.getElementById('a-status');
+    const runBtn = document.getElementById('a-run');
+    const resultArea = document.getElementById('a-result');
+    terminal.innerHTML = '';
+    statusEl.textContent = '运行中...'; statusEl.className = 'status running';
+    runBtn.disabled = true; resultArea.innerHTML = '';
+    let buffer = '', resultData = null;
+    function process() {
+      reader.read().then(({done,value}) => {
+        if(done){statusEl.textContent='完成';statusEl.className='status done';runBtn.disabled=false;if(resultData)showAnalyzerResult(resultData);return;}
+        buffer += decoder.decode(value,{stream:true});
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for(const raw of lines){
+          if(!raw.startsWith('data: ')) continue;
+          const line = raw.slice(6);
+          if(line==='[DONE]') continue;
+          if(line.startsWith('[ERROR]')){terminal.innerHTML+=`<span class="err">❌ ${escapeHtml(line.slice(8))}</span>\n`;statusEl.textContent='错误';statusEl.className='status error';runBtn.disabled=false;return;}
+          if(line.startsWith('[RESULT]')){try{resultData=JSON.parse(line.slice(9))}catch(_){}continue;}
+          let cls='';
+          if(line.includes('错误')||line.includes('Error'))cls='err';
+          else if(line.includes('成功')||line.includes('完成')||line.includes('✓'))cls='ok';
+          else if(line.includes('警告'))cls='warn';
+          else if(line.startsWith('='))cls='dim';
+          terminal.innerHTML+=`<span class="${cls}">${escapeHtml(line)}</span>\n`;
+          terminal.scrollTop=terminal.scrollHeight;
+        }
+        process();
+      }).catch(()=>{statusEl.textContent='中断';statusEl.className='status error';runBtn.disabled=false;});
+    }
+    process();
+  }).catch(err=>{alert('请求失败: '+err.message);});
+}
+function showAnalyzerResult(data){
+  const area = document.getElementById('a-result');
+  if(data&&data.report){area.innerHTML=`<iframe class="report-iframe" src="/reports/${data.report}"></iframe>`;}
+  else{area.innerHTML='<div style="color:var(--yellow);padding:20px;">⚠ 未找到生成的报告文件</div>';}
+}
+
+// ═══════════════════════════════════════════════════════
+// Tab 2: 卦象筛选 — 三阶段工作流
+// ═══════════════════════════════════════════════════════
+
+let selectedHexagrams = new Set();  // Set of yao_bits (0-63)
+
+function renderHexChips() {
+  const container = document.getElementById('s-hex-chips');
+  let html = '';
+  for (let i = 0; i < 64; i++) {
+    const sel = selectedHexagrams.has(i) ? ' selected' : '';
+    html += `<span class="hex-chip${sel}" onclick="toggleHexChip(${i})" title="#${i} ${indexToPattern(i)}">${HEXAGRAM_NAMES[i]}</span>`;
+  }
+  container.innerHTML = html;
+}
+
+function renderSelectedTags() {
+  const container = document.getElementById('s-selected-tags');
+  if (selectedHexagrams.size === 0) {
+    container.innerHTML = '<span class="hex-empty">尚未选择卦象，请点击下方芯片</span>';
+    return;
+  }
+  let html = '';
+  for (const idx of [...selectedHexagrams].sort((a,b)=>a-b)) {
+    html += `<span class="hex-tag">${HEXAGRAM_NAMES[idx]}<span class="remove" onclick="removeHexagram(${idx})">&times;</span></span>`;
+  }
+  container.innerHTML = html;
+}
+
+function toggleHexChip(idx) {
+  if (selectedHexagrams.has(idx)) {
+    selectedHexagrams.delete(idx);
+  } else {
+    selectedHexagrams.add(idx);
+  }
+  renderHexChips();
+  renderSelectedTags();
+}
+
+function removeHexagram(idx) {
+  selectedHexagrams.delete(idx);
+  renderHexChips();
+  renderSelectedTags();
+}
+
+// 扫描入池
+function runScan() {
+  if (selectedHexagrams.size === 0) { alert('请先至少选择一个卦象'); return; }
+
+  const days = parseInt(document.getElementById('s-days').value) || 365;
+  const daily = document.getElementById('s-scan-daily').checked;
+  const weekly = document.getElementById('s-scan-weekly').checked;
+  const monthly = document.getElementById('s-scan-monthly').checked;
+  const hexagrams = [...selectedHexagrams];
+
+  if (!daily && !weekly && !monthly) { alert('请至少选择一个扫描周期'); return; }
+
+  const terminal = document.getElementById('s-terminal');
+  const statusEl = document.getElementById('s-scan-status');
+  const runBtn = document.getElementById('s-scan');
+  terminal.innerHTML = '<span class="dim">正在扫描全市场...</span>';
+  statusEl.textContent = '运行中...'; statusEl.className = 'status running';
+  runBtn.disabled = true;
+  document.getElementById('s-result').innerHTML = '';
+
+  fetch('/api/screener/scan', {
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({hexagrams,days,daily,weekly,monthly}),
+  }).then(resp => {
+    if(!resp.ok) return resp.json().then(d => {throw new Error(d.error)});
+    const reader = resp.body.getReader(), decoder = new TextDecoder();
+    let buffer = '', resultData = null;
+    function process() {
+      reader.read().then(({done,value}) => {
+        if(done){
+          statusEl.textContent='完成';statusEl.className='status done';runBtn.disabled=false;
+          if(resultData) showScanResult(resultData);
+          updatePoolStatus();
+          return;
+        }
+        buffer += decoder.decode(value,{stream:true});
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for(const raw of lines){
+          if(!raw.startsWith('data: ')) continue;
+          const line = raw.slice(6);
+          if(line==='[DONE]') continue;
+          if(line.startsWith('[ERROR]')){terminal.innerHTML+=`<span class="err">❌ ${escapeHtml(line.slice(8))}</span>\n`;statusEl.textContent='错误';statusEl.className='status error';runBtn.disabled=false;return;}
+          if(line.startsWith('[RESULT]')){try{resultData=JSON.parse(line.slice(9))}catch(_){}continue;}
+          let cls='';
+          if(line.includes('错误')||line.includes('Error'))cls='err';
+          else if(line.includes('完成')||line.includes('命中'))cls='ok';
+          else if(line.includes('扫描')||line.includes('通过'))cls='dim';
+          terminal.innerHTML+=`<span class="${cls}">${escapeHtml(line)}</span>\n`;
+          terminal.scrollTop=terminal.scrollHeight;
+        }
+        process();
+      }).catch(()=>{statusEl.textContent='中断';statusEl.className='status error';runBtn.disabled=false;});
+    }
+    process();
+  }).catch(err=>{alert('请求失败: '+err.message);runBtn.disabled=false;});
+}
+
+function showScanResult(data) {
+  // 展示扫描统计
+  document.getElementById('s-result').innerHTML = `
+    <div class="stat-cards">
+      <div class="stat-card"><div class="value blue">${data.total_scanned}</div><div class="label">全市场扫描</div></div>
+      <div class="stat-card"><div class="value green">${data.ma60_passed}</div><div class="label">MA60 通过</div></div>
+      <div class="stat-card"><div class="value yellow">${data.pool_size}</div><div class="label">卦象命中</div></div>
+      <div class="stat-card"><div class="value" style="color:var(--text-dim)">${data.hexagrams ? data.hexagrams.join(', ') : '-'}</div><div class="label">目标卦象</div></div>
+    </div>`;
+}
+
+function updatePoolStatus() {
+  fetch('/api/screener/pool_status').then(r=>r.json()).then(d => {
+    document.getElementById('s-pool-count').textContent = d.pool_size;
+    document.getElementById('s-pool-time').textContent = d.scan_time ? '扫描时间: '+d.scan_time : '';
+    const dot = document.querySelector('#s-pool-status .dot');
+    dot.className = 'dot' + (d.pool_size > 0 ? ' active' : '');
+  });
+}
+
+// 组合条件筛选
+function autoFilter() {
+  // 切换条件时自动触发筛选（如果有股票池数据）
+  fetch('/api/screener/pool_status').then(r=>r.json()).then(d => {
+    if (d.pool_size > 0) runFilter();
+  });
+}
+
+function runFilter() {
+  const conditions = {
+    vol_ge_ma120: document.getElementById('f-vol120').checked,
+    vol_ge_ma60: document.getElementById('f-vol60').checked,
+    signal_daily: document.getElementById('f-sig-daily').checked,
+    signal_weekly: document.getElementById('f-sig-weekly').checked,
+    signal_monthly: document.getElementById('f-sig-monthly').checked,
+  };
+  const active = Object.values(conditions).filter(Boolean).length;
+
+  fetch('/api/screener/filter', {
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(conditions),
+  }).then(r=>r.json()).then(data => {
+    document.getElementById('s-filter-info').textContent =
+      `池内 ${data.total_in_pool} 只 → 过滤后 ${data.filtered} 只`;
+    showFilterResult(data);
+  }).catch(err=>{
+    document.getElementById('s-filter-info').textContent = '筛选失败';
+  });
+}
+
+function showFilterResult(data) {
+  const area = document.getElementById('s-result');
+  const results = data.results || [];
+
+  let html = `
+    <div class="stat-cards">
+      <div class="stat-card"><div class="value blue">${data.total_in_pool}</div><div class="label">股票池总数</div></div>
+      <div class="stat-card"><div class="value ${data.filtered > 0 ? 'green' : 'red'}">${data.filtered}</div><div class="label">满足条件</div></div>
+    </div>`;
+
+  if (results.length > 0) {
+    html += '<div class="table-wrap"><table><thead><tr>' +
+      '<th>代码</th><th>名称</th><th>收盘价</th><th>命中卦象</th>' +
+      '<th>日线</th><th>周线</th><th>月线</th>' +
+      '<th>量/MA120</th><th>量/MA60</th>' +
+      '</tr></thead><tbody>';
+
+    results.forEach(s => {
+      const hex = (s.hexagrams_found || []).slice(0,3).join(' ');
+      const dSig = s.daily_signal ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--text-dim)">—</span>';
+      const wSig = s.weekly_signal ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--text-dim)">—</span>';
+      const mSig = s.monthly_signal ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--text-dim)">—</span>';
+      const v120 = s.vol_ma120_ratio != null ? s.vol_ma120_ratio.toFixed(2) : '—';
+      const v60 = s.vol_ma60_ratio != null ? s.vol_ma60_ratio.toFixed(2) : '—';
+      const v120Cls = s.vol_ma120_ratio != null && s.vol_ma120_ratio >= 1 ? 'green' : 'red';
+      const v60Cls = s.vol_ma60_ratio != null && s.vol_ma60_ratio >= 1 ? 'green' : 'red';
+
+      html += `<tr>
+        <td style="font-family:var(--font-mono)">${s.code}</td><td>${s.name}</td>
+        <td>${s.close}</td><td style="font-size:11px">${hex}</td>
+        <td>${dSig}</td><td>${wSig}</td><td>${mSig}</td>
+        <td class="${v120Cls}">${v120}</td><td class="${v60Cls}">${v60}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  } else if (data.total_in_pool > 0) {
+    html += '<div style="color:var(--yellow);padding:10px;">当前条件过于严格，无股票满足全部条件。请放宽筛选条件。</div>';
+  }
+
+  area.innerHTML = html;
+}
+
+// 页面加载时初始化
+renderHexChips();
+renderSelectedTags();
+updatePoolStatus();
+
+// ═══════════════════════════════════════════════════════
+// Tab 3: 策略回测
+// ═══════════════════════════════════════════════════════
+function toggleBacktestMode() {
+  const mode = document.getElementById('b-mode').value;
+  document.getElementById('bg-screen-date').style.display = (mode==='screen'||mode==='backtest')?'':'none';
+  document.getElementById('bg-verify-date').style.display = mode==='backtest'?'':'none';
+  document.getElementById('bg-start').style.display = mode==='batch'?'':'none';
+  document.getElementById('bg-end').style.display = mode==='batch'?'':'none';
+  document.getElementById('bg-offset').style.display = mode==='batch'?'':'none';
+}
+
+function runBacktest() {
+  const mode = document.getElementById('b-mode').value;
+  const strategy = document.getElementById('b-strategy').value;
+  const sampleRaw = document.getElementById('b-sample').value.trim();
+  const base = { strategy };
+  if (sampleRaw) base.sample = parseInt(sampleRaw);
+
+  let url, body;
+  if (mode === 'screen') {
+    url = '/api/backtest/screen'; body = { ...base };
+  } else if (mode === 'backtest') {
+    const screenDate = document.getElementById('b-screen-date').value;
+    const verifyDate = document.getElementById('b-verify-date').value;
+    if (!screenDate) { alert('请选择筛选日期'); return; }
+    url = '/api/backtest/backtest';
+    body = { ...base, screen_date: screenDate, verify_date: verifyDate || null };
+  } else {
+    const startDate = document.getElementById('b-start-date').value;
+    const endDate = document.getElementById('b-end-date').value;
+    if (!startDate || !endDate) { alert('请选择起止日期'); return; }
+    url = '/api/backtest/batch';
+    body = { ...base, start_date: startDate, end_date: endDate, offset: parseInt(document.getElementById('b-offset').value) || 1 };
+  }
+
+  fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(resp => {
+    if(!resp.ok) return resp.json().then(d=>{throw new Error(d.error)});
+    const reader = resp.body.getReader(), decoder = new TextDecoder();
+    const terminal = document.getElementById('b-terminal');
+    const statusEl = document.getElementById('b-status');
+    const runBtn = document.getElementById('b-run');
+    const resultArea = document.getElementById('b-result');
+    terminal.innerHTML = '';
+    statusEl.textContent = '运行中...'; statusEl.className = 'status running';
+    runBtn.disabled = true; resultArea.innerHTML = '';
+    let buffer = '', resultData = null;
+    function process() {
+      reader.read().then(({done,value}) => {
+        if(done){statusEl.textContent='完成';statusEl.className='status done';runBtn.disabled=false;if(resultData)showBacktestResult(resultData,mode);return;}
+        buffer += decoder.decode(value,{stream:true});
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for(const raw of lines){
+          if(!raw.startsWith('data: ')) continue;
+          const line = raw.slice(6);
+          if(line==='[DONE]') continue;
+          if(line.startsWith('[ERROR]')){terminal.innerHTML+=`<span class="err">❌ ${escapeHtml(line.slice(8))}</span>\n`;statusEl.textContent='错误';statusEl.className='status error';runBtn.disabled=false;return;}
+          if(line.startsWith('[RESULT]')){try{resultData=JSON.parse(line.slice(9))}catch(_){}continue;}
+          let cls='';
+          if(line.includes('错误')||line.includes('Error'))cls='err';
+          else if(line.includes('通过')||line.includes('完成'))cls='ok';
+          else if(line.startsWith('='))cls='dim';
+          terminal.innerHTML+=`<span class="${cls}">${escapeHtml(line)}</span>\n`;
+          terminal.scrollTop=terminal.scrollHeight;
+        }
+        process();
+      }).catch(()=>{statusEl.textContent='中断';statusEl.className='status error';runBtn.disabled=false;});
+    }
+    process();
+  }).catch(err=>{alert('请求失败: '+err.message);});
+}
+
+function showBacktestResult(data, mode) {
+  const area = document.getElementById('b-result');
+  if (!data) return;
+  if (mode === 'screen') {
+    const results = data.results || [];
+    let html = `<div class="stat-cards"><div class="stat-card"><div class="value blue">${data.count}</div><div class="label">通过筛选</div></div></div>`;
+    if(results.length){html+='<div class="table-wrap"><table><thead><tr><th>代码</th><th>名称</th><th>价格</th><th>涨跌幅</th><th>信号</th></tr></thead><tbody>';
+      results.forEach(r=>{const pctCls=r.pct_change>=0?'green':'red';html+=`<tr><td>${r.code}</td><td>${r.name}</td><td>${r.price.toFixed(2)}</td><td class="${pctCls}">${r.pct_change>=0?'+':''}${r.pct_change.toFixed(2)}%</td><td>${r.signal_desc||'-'}</td></tr>`;});
+      html+='</tbody></table></div>';}
+    area.innerHTML = html;
+  } else if (mode === 'backtest') {
+    area.innerHTML = `<div class="stat-cards">
+      <div class="stat-card"><div class="value blue">${data.total_screened}</div><div class="label">筛选总数</div></div>
+      <div class="stat-card"><div class="value blue">${data.passed}</div><div class="label">通过筛选</div></div>
+      <div class="stat-card"><div class="value blue">${data.verify_count}</div><div class="label">可验证</div></div>
+      <div class="stat-card"><div class="value green">${data.winners}</div><div class="label">上涨</div></div>
+      <div class="stat-card"><div class="value red">${data.losers}</div><div class="label">下跌</div></div>
+      <div class="stat-card"><div class="value ${data.win_rate>=50?'green':'red'}">${data.win_rate}%</div><div class="label">胜率</div></div>
+      <div class="stat-card"><div class="value ${data.avg_return>=0?'green':'red'}">${data.avg_return>=0?'+':''}${data.avg_return}%</div><div class="label">平均收益</div></div>
+      <div class="stat-card"><div class="value green">+${data.max_gain}%</div><div class="label">最大盈利</div></div>
+      <div class="stat-card"><div class="value red">${data.max_loss}%</div><div class="label">最大亏损</div></div>
+    </div><div style="color:var(--text-dim);font-size:12px;">筛选日 ${data.screen_date} → 验证日 ${data.verify_date}</div>`;
+  } else {
+    const s = data.summary || {};
+    let html = `<div class="stat-cards">
+      <div class="stat-card"><div class="value blue">${data.total_days}</div><div class="label">回测天数</div></div>
+      <div class="stat-card"><div class="value blue">${s.total_verify}</div><div class="label">总验证样本</div></div>
+      <div class="stat-card"><div class="value ${s.avg_win_rate>=50?'green':'red'}">${s.avg_win_rate}%</div><div class="label">平均胜率</div></div>
+      <div class="stat-card"><div class="value ${s.avg_return>=0?'green':'red'}">${s.avg_return>=0?'+':''}${s.avg_return}%</div><div class="label">平均收益</div></div>
+    </div>`;
+    const details = data.details || [];
+    if(details.length){html+='<div class="table-wrap"><table><thead><tr><th>筛选日</th><th>验证日</th><th>通过</th><th>上涨</th><th>下跌</th><th>胜率</th><th>平均收益</th></tr></thead><tbody>';
+      details.forEach(d=>{html+=`<tr><td>${d.screen_date}</td><td>${d.verify_date}</td><td>${d.passed}</td><td class="green">${d.winners}</td><td class="red">${d.losers}</td><td class="${d.win_rate>=50?'green':'red'}">${d.win_rate}%</td><td class="${d.avg_return>=0?'green':'red'}">${d.avg_return>=0?'+':''}${d.avg_return}%</td></tr>`;});
+      html+='</tbody></table></div>';}
+    area.innerHTML = html;
+  }
+}
+
+// ── 初始化 ──
+toggleBacktestMode();
+const today = new Date().toISOString().split('T')[0];
+document.getElementById('b-screen-date').value = today;
+document.getElementById('b-start-date').value = today;
+document.getElementById('b-end-date').value = today;
+</script>
+
+</body>
+</html>
