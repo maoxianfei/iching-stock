@@ -1,11 +1,13 @@
 """
-K线 → 爻 → 卦象 滑动窗口计算引擎
+K线 → 爻 → 卦象 滑动窗口计算引擎 (iching_analyzer 专属)
 6根K线为1个卦象，滑动窗口每次前进1根K线
+生成 GuaResult/GuaAnalysis 分析模型，用于 HTML 报告渲染
 """
 
 from dataclasses import dataclass, field
-from data_fetcher import KLine
-from hexagram_engine import Hexagram, get_hexagram, calc_bullish_ratio
+
+from core.models import KLine
+from core.hexagram_db import Hexagram, get_hexagram, calc_bullish_ratio
 
 
 @dataclass
@@ -166,7 +168,7 @@ def run_analysis(klines: list[KLine], symbol: str,
     Returns:
         GuaAnalysis 完整分析结果
     """
-    interval_labels = {"weekly": "周线", "monthly": "月线"}
+    interval_labels = {"daily": "日线", "weekly": "周线", "monthly": "月线"}
     interval_label = interval_labels.get(interval, interval)
 
     results = analyze(klines)

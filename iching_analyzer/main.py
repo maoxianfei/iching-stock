@@ -1,91 +1,82 @@
 """
-K线卦象分析系统 — CLI 入口
+易经个股模块 — CLI 入口
+基于六十四卦的股票行情单股深度分析 + HTML报告生成
 
 用法:
-    python main.py 600519                          # A股，默认月线24周期
-    python main.py 600519 -i weekly -n 30          # A股周线，30周期
-    python main.py AAPL -i monthly -n 24           # 美股月线
-    python main.py 00700 -i weekly -n 50           # 港股周线
-    python main.py 600519 -o my_report.html        # 指定输出路径
+    python main.py analyze 600519                    # A股，默认月线24周期
+    python main.py analyze 600519 -i weekly -n 30    # A股周线，30周期
+    python main.py analyze AAPL -i monthly -n 24     # 美股月线
+    python main.py analyze 00700 -i weekly -n 50     # 港股周线
+    python main.py analyze 600519 -o my_report.html # 指定输出路径
 """
 
-import argparse
 import sys
 import os
+
+# 添加项目根目录到 sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+import argparse
 import webbrowser
 from datetime import datetime
 
-# 添加项目根目录到 sys.path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from data_fetcher import fetch_klines, get_stock_name, detect_market, normalize_symbol
-from gua_calculator import run_analysis
-from report_generator import generate_html
+from core.models import normalize_symbol, get_stock_name
+from core.data_fetcher import fetch_klines
+from iching_analyzer.gua_calculator import run_analysis
+from iching_analyzer.report_generator import generate_html
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="K线卦象分析系统 — 基于六十四卦的股票行情分析工具",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python main.py 600519                  # 茅台，月线，24周期
-  python main.py AAPL -i weekly -n 30    # 苹果，周线，30周期
-  python main.py 00700 -i monthly -n 36  # 腾讯，月线，36周期
-        """
+def run(symbol: str, interval: str = "monthly", count: int = 24, output: str = None):
+    """
+    运行个股卦象分析
 
-    )
-    parser.add_argument("symbol", help="股票代码 (A股6位数字 / 美股字母 / 港股5位数字)")
-    parser.add_argument("-i", "--interval", choices=["weekly", "monthly"],
-                        default="monthly", help="K线周期 (默认: monthly)")
-    parser.add_argument("-n", "--count", type=int, default=24,
-                        help="K线数量 (默认: 24, 最小: 6)")
-    parser.add_argument("-o", "--output", default=None,
-                        help="输出文件路径 (默认: output/<symbol>_<interval>_<timestamp>.html)")
-
-    args = parser.parse_args()
-
-    if args.count < 6:
+    Args:
+        symbol: 股票代码
+        interval: 周期 (weekly/monthly)
+        count: K线数量
+        output: 输出文件路径
+    """
+    if count < 6:
         print("错误: K线数量至少需要 6 根才能生成卦象")
-        sys.exit(1)
+        return
 
     # Step 1: 获取数据
     print(f"\n{'='*60}")
-    print(f"  K线卦象分析系统")
+    print(f"  K线卦象分析系统 — 易经个股模块")
     print(f"{'='*60}")
-    print(f"  股票代码: {args.symbol}")
-    print(f"  周期: {'周线' if args.interval == 'weekly' else '月线'}")
-    print(f"  K线数量: {args.count}")
+    print(f"  股票代码: {symbol}")
+    print(f"  周期: {'周线' if interval == 'weekly' else '月线'}")
+    print(f"  K线数量: {count}")
     print(f"{'='*60}\n")
 
-    symbol, market = normalize_symbol(args.symbol)
-    market_names = {"a_stock": "A股", "us_stock": "美股", "hk_stock": "港股"}
+    sym, market = normalize_symbol(symbol)
+    market_names = {"a": "A股", "us": "美股", "hk": "港股"}
     market_name = market_names.get(market, market)
     print(f"[1/4] 获取股票信息...")
-    stock_name = get_stock_name(symbol, market)
+    stock_name = get_stock_name(sym, market)
     print(f"      市场: {market_name} | 名称: {stock_name}")
 
     print(f"[2/4] 获取K线数据...")
     try:
-        klines = fetch_klines(symbol, args.interval, args.count)
+        klines = fetch_klines(sym, interval, count)
     except Exception as e:
         print(f"      错误: {e}")
-        sys.exit(1)
+        return
 
     print(f"      成功获取 {len(klines)} 根K线")
     print(f"      日期范围: {klines[0].date} ~ {klines[-1].date}")
 
     if len(klines) < 6:
         print("      错误: K线数量不足 6 根，无法生成卦象")
-        sys.exit(1)
+        return
 
     # Step 2: 计算卦象
     print(f"[3/4] 计算卦象...")
     try:
-        analysis = run_analysis(klines, symbol, stock_name, args.interval)
+        analysis = run_analysis(klines, sym, stock_name, interval)
     except Exception as e:
         print(f"      错误: {e}")
-        sys.exit(1)
+        return
 
     print(f"      生成 {analysis.total_guas} 个卦象")
     print(f"      去重后 {len(analysis.unique_hexagrams)} 种卦象")
@@ -111,16 +102,16 @@ def main():
         html = generate_html(analysis)
     except Exception as e:
         print(f"      错误: {e}")
-        sys.exit(1)
+        return
 
     # 确定输出路径
-    if args.output:
-        output_path = args.output
+    if output:
+        output_path = output
     else:
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output")
         os.makedirs(output_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{symbol}_{args.interval}_{ts}.html"
+        filename = f"{sym}_{interval}_{ts}.html"
         output_path = os.path.join(output_dir, filename)
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -138,7 +129,3 @@ def main():
     print(f"\n{'='*60}")
     print(f"  分析完成！")
     print(f"{'='*60}\n")
-
-
-if __name__ == "__main__":
-    main()

@@ -1,79 +1,22 @@
 """
 统一数据获取层 — 支持 A股 (mootdx) + 美股/港股 (Yahoo Finance)
-输出统一 KLine dataclass
+输出统一 KLine dataclass，支持日线/周线/月线三周期
+
+统一接口:
+  fetch_klines(code, interval, count, market)
+    - market="auto" → 自动识别市场
+    - market="a/hk/us" → 显式指定市场
+    - interval="daily/weekly/monthly"
 """
 
 import re
+import json
 import requests
-from dataclasses import dataclass, field
 from datetime import datetime
+from collections import OrderedDict
 from typing import Optional
 
-
-# ============================================================
-# 数据结构
-# ============================================================
-
-@dataclass
-class KLine:
-    """统一 K 线数据结构"""
-    date: str          # "YYYY-MM-DD"
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int = 0
-
-    @property
-    def is_yang(self) -> bool:
-        """阳线：收盘 >= 开盘"""
-        return self.close >= self.open
-
-
-# ============================================================
-# 市场识别
-# ============================================================
-
-def detect_market(code: str) -> str:
-    """
-    根据代码格式自动识别市场
-    - "600519" / "000001" / "300750" → "a_stock"
-    - "AAPL" / "TSLA" / "BABA" → "us_stock"
-    - "00700" / "09988" / "01810" → "hk_stock"
-    """
-    code = code.strip().upper()
-
-    # A股：6位纯数字
-    if re.match(r'^\d{6}$', code):
-        return "a_stock"
-
-    # 港股：5位数字（也可能带.HK后缀）
-    if re.match(r'^\d{5}$', code):
-        return "hk_stock"
-    if code.endswith('.HK'):
-        return "hk_stock"
-
-    # 美股：纯字母，2-5个字符
-    if re.match(r'^[A-Z]{1,5}$', code):
-        return "us_stock"
-
-    raise ValueError(f"无法识别股票代码市场: {code}")
-
-
-def normalize_symbol(code: str) -> tuple[str, str]:
-    """
-    标准化股票代码，返回 (原始代码, 市场类型)
-    """
-    market = detect_market(code)
-    symbol = code.strip().upper()
-
-    if market == "hk_stock":
-        # 去掉 .HK 后缀
-        symbol = symbol.replace('.HK', '')
-        # 补齐5位
-        symbol = symbol.zfill(5)
-
-    return symbol, market
+from core.models import KLine, detect_market, normalize_symbol, get_stock_name
 
 
 # ============================================================
@@ -83,19 +26,26 @@ def normalize_symbol(code: str) -> tuple[str, str]:
 def _fetch_a_stock_klines(symbol: str, interval: str, count: int) -> list[KLine]:
     """
     A股 K 线 — 使用 mootdx
-    interval: "weekly" → category=5, "monthly" → category=6
+    interval: "daily" (日线) / "weekly" (周线) / "monthly" (月线)
     """
     try:
         from mootdx.quotes import Quotes
     except ImportError:
         raise ImportError("请先安装 mootdx: pip install mootdx")
 
-    frequency_map = {"weekly": 5, "monthly": 6}
+    frequency_map = {"daily": 9, "weekly": 5, "monthly": 6}
     frequency = frequency_map.get(interval)
     if frequency is None:
-        raise ValueError(f"A股不支持的周期: {interval}，可选 weekly/monthly")
+        raise ValueError(f"A股不支持的周期: {interval}，可选 daily/weekly/monthly")
 
     client = Quotes.factory(market='std')
+
+    # 确定市场: 6/9开头=上海, 其余=深圳
+    if symbol.startswith(("6", "9")):
+        market = 1
+    else:
+        market = 0
+
     df = client.bars(symbol=symbol, frequency=frequency, offset=count)
 
     if df is None or df.empty:
@@ -103,13 +53,20 @@ def _fetch_a_stock_klines(symbol: str, interval: str, count: int) -> list[KLine]
 
     result = []
     for _, row in df.iterrows():
-        # mootdx 月线/周线返回 year, month, day 整数列，直接构造日期
-        y = int(row.get('year', 0))
-        m = int(row.get('month', 1))
-        d = int(row.get('day', 1))
-        date_str = f"{y:04d}-{m:02d}-{d:02d}"
+        # mootdx 可能返回 datetime 字符串或 year/month/day 整数列
+        dt_str = str(row.get("datetime", ""))
+        if dt_str and dt_str != "nan" and len(dt_str) >= 10:
+            date_str = str(dt_str)[:10]
+        else:
+            # 旧版 mootdx 返回 year, month, day 整数列
+            y = int(row.get('year', 0))
+            m = int(row.get('month', 1))
+            d = int(row.get('day', 1))
+            date_str = f"{y:04d}-{m:02d}-{d:02d}"
 
-        # 获取价格字段
+        if not date_str or date_str == "0000-00-00":
+            continue
+
         def _f(key, default=0.0):
             v = row.get(key, default)
             return float(v) if v is not None else default
@@ -120,7 +77,7 @@ def _fetch_a_stock_klines(symbol: str, interval: str, count: int) -> list[KLine]
             high=_f('high'),
             low=_f('low'),
             close=_f('close'),
-            volume=int(_f('vol', 0)),
+            volume=float(_f('vol', 0)),
         ))
 
     # 按日期升序排列（mootdx 返回的是从近到远）
@@ -133,10 +90,10 @@ def _fetch_a_stock_klines(symbol: str, interval: str, count: int) -> list[KLine]
 # ============================================================
 
 def _fetch_yahoo_klines(symbol: str, interval: str, count: int,
-                         market: str = "us_stock") -> list[KLine]:
+                         market: str = "us") -> list[KLine]:
     """
     美股/港股 K 线 — Yahoo Finance chart API
-    如果 Yahoo 不可用，美股回退到新浪日线聚合
+    如果 Yahoo 不可用，回退到新浪(美股)或腾讯(港股)日线聚合
     """
     # 先尝试 Yahoo
     try:
@@ -145,34 +102,47 @@ def _fetch_yahoo_klines(symbol: str, interval: str, count: int,
         yahoo_error = str(e)
 
     # 美股回退: 新浪日线 → 周/月聚合
-    if market == "us_stock":
+    if market == "us":
         print(f"      Yahoo 不可用 ({yahoo_error})，使用新浪日线聚合...")
         return _fetch_us_klines_from_sina(symbol, interval, count)
 
     # 港股回退: 腾讯日线 → 周/月聚合
-    if market == "hk_stock":
+    if market == "hk":
         print(f"      Yahoo 不可用 ({yahoo_error})，使用腾讯日线聚合...")
         return _fetch_hk_klines_from_tencent(symbol, interval, count)
 
-    raise RuntimeError(
-        f"未知市场 K线获取失败: {yahoo_error}"
-    )
+    raise RuntimeError(f"未知市场 K线获取失败: {yahoo_error}")
 
 
 def _fetch_yahoo_klines_direct(symbol: str, interval: str, count: int,
                                 market: str) -> list[KLine]:
     """Yahoo Finance chart API 直接调用"""
-    interval_map = {"weekly": "1wk", "monthly": "1mo"}
+    interval_map = {"daily": "1d", "weekly": "1wk", "monthly": "1mo"}
     yf_interval = interval_map.get(interval)
     if yf_interval is None:
         raise ValueError(f"Yahoo 不支持的周期: {interval}")
 
-    if market == "hk_stock":
+    if market == "hk":
         yf_symbol = f"{symbol}.HK"
     else:
         yf_symbol = symbol
 
-    range_val = "5y" if (interval == "monthly" and count > 36) else "3y"
+    # range 映射 (根据需要的数量近似)
+    if count <= 30:
+        range_val = "1mo"
+    elif count <= 90:
+        range_val = "3mo"
+    elif count <= 250:
+        range_val = "1y"
+    elif count <= 500:
+        range_val = "2y"
+    elif count <= 1250:
+        range_val = "5y"
+    else:
+        range_val = "max"
+
+    if interval == "monthly" and count > 36:
+        range_val = "5y"
 
     session = requests.Session()
     session.headers["User-Agent"] = (
@@ -227,7 +197,7 @@ def _fetch_yahoo_klines_direct(symbol: str, interval: str, count: int,
             high=round(float(h), 2) if h else 0,
             low=round(float(l), 2) if l else 0,
             close=round(float(c), 2),
-            volume=int(v) if v else 0,
+            volume=float(v) if v else 0.0,
         ))
 
     if len(result) > count:
@@ -236,15 +206,16 @@ def _fetch_yahoo_klines_direct(symbol: str, interval: str, count: int,
     return result
 
 
+# ============================================================
+# 港股回退 — 腾讯日线聚合
+# ============================================================
+
 def _fetch_hk_klines_from_tencent(symbol: str, interval: str,
                                    count: int) -> list[KLine]:
     """
     港股 K 线 — 腾讯 fqkline 日线 → 周/月聚合
-    interval: "weekly" → 聚合为周线, "monthly" → 聚合为月线
     腾讯格式: [日期, 开盘价, 收盘价, 最高价, 最低价, 成交量]
     """
-    import json
-
     daily_count = count * 25 if interval == "monthly" else count * 7
     daily_count = max(daily_count, 500)
     daily_count = min(daily_count, 720)  # 腾讯最多返回720条
@@ -272,7 +243,7 @@ def _fetch_hk_klines_from_tencent(symbol: str, interval: str,
             high=float(item[3]),
             low=float(item[4]),
             close=float(item[2]),
-            volume=int(float(item[5])),
+            volume=float(item[5]),
         ))
 
     if not daily_klines:
@@ -280,24 +251,25 @@ def _fetch_hk_klines_from_tencent(symbol: str, interval: str,
 
     daily_klines.sort(key=lambda k: k.date)
 
-    if interval == "weekly":
+    if interval == "daily":
+        return daily_klines[-count:]
+    elif interval == "weekly":
         return _aggregate_to_weekly(daily_klines)[-count:]
     else:
         return _aggregate_to_monthly(daily_klines)[-count:]
 
 
+# ============================================================
+# 美股回退 — 新浪日线聚合
+# ============================================================
+
 def _fetch_us_klines_from_sina(symbol: str, interval: str,
                                 count: int) -> list[KLine]:
     """
     美股 K 线 — 新浪日线 → 周/月聚合
-    interval: "weekly" → 聚合为周线, "monthly" → 聚合为月线
     """
-    import json
-
     # 获取足够多的日线数据用于聚合
-    # 月线: count根月线 → 约 count*21 个交易日 → 取 count*25 根日线保证足够
     daily_count = count * 25 if interval == "monthly" else count * 7
-    # 至少取 500 根日线 (约2年)
     daily_count = max(daily_count, 500)
 
     url = "https://stock.finance.sina.com.cn/usstock/api/jsonp.php/var/US_MinKService.getDailyK"
@@ -319,29 +291,31 @@ def _fetch_us_klines_from_sina(symbol: str, interval: str,
             high=float(item.get("h", 0)),
             low=float(item.get("l", 0)),
             close=float(item.get("c", 0)),
-            volume=int(item.get("v", 0)),
+            volume=float(item.get("v", 0)),
         ))
 
     if not daily_klines:
         raise RuntimeError(f"新浪美股未返回日线数据: {symbol}")
 
-    # 按日期排序
     daily_klines.sort(key=lambda k: k.date)
 
-    # 聚合为周线/月线
-    if interval == "weekly":
+    if interval == "daily":
+        return daily_klines[-count:]
+    elif interval == "weekly":
         return _aggregate_to_weekly(daily_klines)[-count:]
     else:
         return _aggregate_to_monthly(daily_klines)[-count:]
 
 
+# ============================================================
+# 日线 → 周线/月线聚合
+# ============================================================
+
 def _aggregate_to_weekly(daily: list[KLine]) -> list[KLine]:
     """日线 → 周线聚合"""
-    from collections import OrderedDict
     weeks = OrderedDict()
 
     for k in daily:
-        # 获取 ISO 周编号 (year-week)
         dt = datetime.strptime(k.date, '%Y-%m-%d')
         iso = dt.isocalendar()
         week_key = f"{iso[0]}-W{iso[1]:02d}"
@@ -366,7 +340,6 @@ def _aggregate_to_weekly(daily: list[KLine]) -> list[KLine]:
 
 def _aggregate_to_monthly(daily: list[KLine]) -> list[KLine]:
     """日线 → 月线聚合"""
-    from collections import OrderedDict
     months = OrderedDict()
 
     for k in daily:
@@ -377,7 +350,6 @@ def _aggregate_to_monthly(daily: list[KLine]) -> list[KLine]:
 
     result = []
     for month_key, bars in months.items():
-        # 取最后一个交易日作为月线日期
         result.append(KLine(
             date=bars[-1].date,
             open=bars[0].open,
@@ -394,78 +366,46 @@ def _aggregate_to_monthly(daily: list[KLine]) -> list[KLine]:
 # 统一入口
 # ============================================================
 
-def fetch_klines(symbol: str, interval: str = "monthly",
-                 count: int = 24) -> list[KLine]:
+def fetch_klines(
+    code: str,
+    interval: str = "monthly",
+    count: int = 24,
+    market: str = "auto",
+) -> list[KLine]:
     """
     统一 K 线获取入口
 
     Args:
-        symbol: 股票代码 (600519 / AAPL / 00700)
-        interval: 周期 ("weekly" / "monthly")
-        count: 获取数量（默认 24，即 24 根月线或周线）
+        code: 股票代码 (600519 / AAPL / 00700)
+        interval: 周期 ("daily" / "weekly" / "monthly")
+        count: 获取数量（默认 24）
+        market: 市场类型 ("auto" 自动识别 / "a" A股 / "hk" 港股 / "us" 美股)
 
     Returns:
         list[KLine]: 按日期升序排列
     """
-    symbol, market = normalize_symbol(symbol)
-
-    if market == "a_stock":
-        klines = _fetch_a_stock_klines(symbol, interval, count)
+    if market == "auto":
+        symbol, detected_market = normalize_symbol(code)
+        # normalize_symbol 返回 "a"/"hk"/"us"
     else:
-        klines = _fetch_yahoo_klines(symbol, interval, count, market)
+        symbol = code.strip().upper()
+        if market == "hk":
+            symbol = symbol.replace('.HK', '').zfill(5)
+        detected_market = market
+
+    # 内部市场标识映射
+    market_map = {"a": "a", "hk": "hk", "us": "us",
+                  "a_stock": "a", "hk_stock": "hk", "us_stock": "us"}
+    mkt = market_map.get(detected_market, detected_market)
+
+    if mkt == "a":
+        klines = _fetch_a_stock_klines(symbol, interval, count)
+    elif mkt in ("hk", "us"):
+        klines = _fetch_yahoo_klines(symbol, interval, count, mkt)
+    else:
+        raise ValueError(f"不支持的市场: {detected_market}")
 
     if not klines:
-        raise RuntimeError(f"未能获取到数据: {symbol} ({market})")
+        raise RuntimeError(f"未能获取到数据: {symbol} ({mkt})")
 
     return klines
-
-
-# ============================================================
-# 获取股票名称（用于报告标题）
-# ============================================================
-
-def get_stock_name(symbol: str, market: str = "") -> str:
-    """尝试获取股票中文名称"""
-    if not market:
-        _, market = normalize_symbol(symbol)
-
-    try:
-        if market == "a_stock":
-            # 使用腾讯行情接口获取A股名称
-            # 上海: 600/601/603/605/688, 深圳: 000/001/002/003/300/301
-            if symbol.startswith(('6', '68')):
-                prefix = "sh"
-            else:
-                prefix = "sz"
-            url = f"https://qt.gtimg.cn/q={prefix}{symbol}"
-            r = requests.get(url, timeout=10)
-            r.encoding = "gbk"
-            # 格式: v_sh600519="1~贵州茅台~..."
-            m = re.search(r'"([^"]+)"', r.text)
-            if m:
-                parts = m.group(1).split("~")
-                if len(parts) > 1 and parts[1]:
-                    return parts[1]
-        elif market == "us_stock":
-            # 使用新浪获取中文名
-            url = f"https://hq.sinajs.cn/list=gb_{symbol.lower()}"
-            r = requests.get(url, headers={
-                "Referer": "https://finance.sina.com.cn/",
-                "User-Agent": "Mozilla/5.0",
-            }, timeout=10)
-            r.encoding = "gbk"
-            m = re.search(r'"(.+?)"', r.text)
-            if m:
-                return m.group(1).split(",")[0]
-        elif market == "hk_stock":
-            # 使用腾讯获取中文名
-            url = f"https://qt.gtimg.cn/q=r_hk{symbol}"
-            r = requests.get(url, timeout=10)
-            r.encoding = "gbk"
-            m = re.search(r'"(.+?)"', r.text)
-            if m:
-                return m.group(1).split("~")[1]
-    except Exception:
-        pass
-
-    return symbol

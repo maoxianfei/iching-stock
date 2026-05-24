@@ -14,17 +14,17 @@ import os
 import argparse
 
 # 添加项目根目录到 path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from hexagram_engine import (
+from core.hexagram_mapper import (
     klines_to_hexagrams,
     find_matches,
     detect_hexagram_sequences,
     get_hexagram_info,
     format_yao_sequence,
 )
-from data_fetcher import fetch_klines
-from screener import (
+from core.data_fetcher import fetch_klines
+from hexagram_screener.screener import (
     run_full_scan,
     print_scan_report,
     export_to_file,
@@ -65,7 +65,7 @@ def scan_single(code: str, market: str = "a"):
 
     for period, label, count in periods:
         try:
-            klines = fetch_klines(code, market=market, period=period, count=count)
+            klines = fetch_klines(code, interval=period, count=count, market=market)
             if not klines or len(klines) < 7:
                 print(f"  {label}: K线不足 ({len(klines) if klines else 0}根)")
                 continue

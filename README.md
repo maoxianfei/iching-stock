@@ -1,14 +1,61 @@
 # K线卦象分析系统
 
-将六十四卦应用于股票K线分析，通过滑动窗口将K线阴阳映射为卦象，生成自包含的交互式 HTML 分析报告。
+A股/港股/美股 K线 → 易经六十四卦 映射分析系统。
+支持**单股深度分析**（HTML交互报告）和**全市场批量筛选**（CSV导出）两大子系统。
+
+---
 
 ## 功能特性
 
-- **多市场支持**：A股、港股、美股，自动识别市场类型
-- **多周期支持**：周线、月线卦象分析
-- **64 卦完整数据库**：含卦名、释义、投资解读、看涨程度评级
-- **交互式报告**：Chart.js 烛台图 + 卦象标注 + 悬停解读 + 点击查看任意6周期卦象
-- **零依赖部署**：HTML 报告自包含，CDN 加载前端资源，双击即可查看
+- **单股分析**：Chart.js 烛台图 + 卦象标注 + 悬停解读 + 点击6周期卦象面板
+- **全市场筛选**：MA60周线预过滤 → 卦象序列扫描 → 时间过滤 → 信号分层导出
+- **多市场支持**：A股（mootdx）、港股（Yahoo/腾讯）、美股（Yahoo/新浪）
+- **多周期支持**：日线/周线/月线三维度
+- **64卦完整数据库**：含卦名、卦义、行情解读、看涨程度评级（1~5星）
+- **零部署依赖**：HTML报告自包含，CDN加载前端资源，双击即可查看
+
+---
+
+## 项目架构
+
+```
+iching-stock/
+├── main.py                      # 统一CLI入口（路由到子系统）
+├── core/                        # 核心共享模块（跨子系统复用）
+│   ├── models.py                # KLine 数据模型 + 市场识别
+│   ├── hexagram_db.py           # 64卦数据库 + 看涨等级 + 查询API
+│   ├── hexagram_mapper.py       # K线→爻位映射 + 滑动窗口 + 序列检测
+│   └── data_fetcher.py          # 统一数据拉取层（A股+港股+美股，日/周/月）
+│
+├── iching_analyzer/             # 易经个股模块（单股深度分析 + HTML报告）
+│   ├── main.py                  # 子系统入口
+│   ├── gua_calculator.py        # GuaResult/GuaAnalysis + 滑动窗口卦象分析
+│   └── report_generator.py      # HTML报告生成（Chart.js K线图 + 卦象标注）
+│
+├── hexagram_screener/           # 卦象扫描模块（全市场筛选 + CSV导出）
+│   ├── main.py                  # 子系统入口
+│   └── screener.py              # MA60过滤 + 卦象扫描 + 时间过滤 + 信号分层 + 导出
+│
+├── output/                      # 分析报告/导出输出（gitignore）
+└── README.md
+```
+
+### 模块归属原则
+
+- **`core/`** — 纯数据/工具层，不绑定任何业务逻辑，可被所有子系统调用
+  - `models.py`：KLine 数据模型（统一 volume 为 float）
+  - `hexagram_db.py`：Hexagram dataclass + 64卦完整数据 + 看涨等级
+  - `hexagram_mapper.py`：K线→卦象核心算法（滑动窗口、序列检测）
+  - `data_fetcher.py`：统一数据拉取（A股mootdx、港股Yahoo/腾讯、美股Yahoo/新浪）
+
+- **`iching_analyzer/`** — 易经个股模块（独有）
+  - `gua_calculator.py`：GuaResult/GuaAnalysis 滑动窗口分析模型
+  - `report_generator.py`：自包含 HTML 交互报告
+
+- **`hexagram_screener/`** — 卦象扫描模块（独有）
+  - `screener.py`：MA60预筛选 + 卦象序列扫描 + 信号分层 + CSV导出
+
+---
 
 ## 快速开始
 
@@ -18,53 +65,61 @@
 pip install mootdx requests
 ```
 
-### 使用
+### 单股分析（iching_analyzer 子系统）
 
 ```bash
-# A股 — 周线分析
-python main.py 600519 -i weekly -n 48 -o output/maotai.html
+# A股 — 月线分析（默认24周期）
+python main.py analyze 600519
 
-# 港股 — 月线分析
-python main.py 09626 -i monthly -n 720 -o output/bilibili.html
+# A股 — 周线分析，指定周期数
+python main.py analyze 600519 -i weekly -n 30
 
-# 美股 — 周线分析
-python main.py AAPL -i weekly -n 120 -o output/apple.html
+# 港股 — 周线分析
+python main.py analyze 09626 -i weekly -n 50
+
+# 美股 — 月线分析
+python main.py analyze AAPL -i monthly -n 24
+
+# 指定输出路径
+python main.py analyze 600519 -o output/maotai.html
 ```
 
-参数说明：
+**参数说明：**
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `symbol` | 股票代码 | 必填 |
+| `symbol` | 股票代码（A股6位 / 美股字母 / 港股5位） | 必填 |
 | `-i, --interval` | 周期：`weekly` / `monthly` | `monthly` |
 | `-n, --count` | K线数量 | `24` |
-| `-o, --output` | 输出路径 | `output/{symbol}_{interval}_{timestamp}.html` |
+| `-o, --output` | 输出路径 | `output/<symbol>_<interval>_<timestamp>.html` |
 
-### 全市场卦象筛选
+### 全市场筛选（hexagram_screener 子系统）
 
 ```bash
-cd hexagram-screener
+# 全市场扫描（MA60预筛选 + 卦象扫描 + 最近365天信号过滤）
+python main.py screen
 
-# 全市场扫描（最近90天 + 导出CSV）
-python main.py --days 90 --export
+# 全市场扫描 + 导出CSV（同花顺可导入）
+python main.py screen --export
 
-# 全市场扫描（最近1年，不导出）
-python main.py --days 365
+# 全市场扫描，90天窗口 + 导出
+python main.py screen --days 90 --export
 
 # 单股三维度扫描
-python main.py --single 600021
+python main.py screen --single 600021
 ```
 
-筛选参数：
+**筛选参数：**
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
+| `--single` | 单股扫描模式，指定股票代码 | 全市场 |
+| `--market` | 市场（`a`=A股, `hk`=港股, `us`=美股） | `a` |
 | `--days` | 时间过滤窗口（天） | `365` |
 | `--export` | 导出数据文件（CSV+代码列表） | 不导出 |
 | `--output-dir` | 导出目录 | `output/` |
-| `--single` | 单股扫描模式，指定股票代码 | 全市场 |
 
-导出文件说明：
+**导出文件说明：**
 
 | 文件 | 内容 | 用途 |
 |------|------|------|
@@ -72,95 +127,92 @@ python main.py --single 600021
 | `resonance_detail.csv` | 共振股详情（代码/名称/各维度信号数/区间/价格） | Excel对照分析 |
 | `all_signals.csv` | 全部信号（按维度分块，结束时间倒序） | 完整数据备用 |
 
-## 项目架构
+---
 
-```
-iching-stock/
-├── main.py              # 入口程序 — 单股分析，四步流程编排（拉数据→算卦象→查释义→生成报告）
-├── data_fetcher.py      # 数据获取层 — mootdx拉A股 / Yahoo拉港股美股，自动识别市场
-├── gua_calculator.py    # 卦象计算器 — 6根K线滑动窗口，阳线→阳爻、阴线→阴爻，映射64卦
-├── hexagram_engine.py   # 六十四卦数据库 — 64卦完整数据（卦名/释义/投资解读/看涨等级）
-├── report_generator.py  # 报告生成器 — 自包含HTML交互报告（Chart.js烛台图+卦象标注+点击面板）
-│
-├── hexagram-screener/   # 【全市场卦象筛选系统】— 三步漏斗批量扫描
-│   ├── main.py          # 筛选入口 — 全市场扫描 / 单股扫描 / 数据导出（CLI参数控制）
-│   ├── screener.py      # 筛选核心 — MA60周线过滤→卦象序列扫描→时间过滤 + 信号分层 + CSV导出
-│   ├── hexagram_engine.py  # 卦象引擎 — 64卦计算 + 序列检测（如火地晋→水雷屯）
-│   └── data_fetcher.py  # 数据拉取 — mootdx并发拉取A股日线/周线/月线K线
-│
-└── output/              # 输出目录 — HTML报告 + 导出的CSV数据（.gitignore排除）
-```
+## 数据流
 
-### 数据流（单股分析）
+### 单股分析（iching_analyzer）
 
 ```
 股票代码 + 周期
     │
     ▼
-data_fetcher.py  ←  mootdx (A股) / Yahoo (港股/美股)
-    │              获取周线或月线K线数据
+core/data_fetcher.py  ← mootdx (A股) / Yahoo (港股/美股)
+    │               获取周线或月线K线数据
     ▼
-gua_calculator.py  ←  6根K线滑动窗口 → 阴阳爻映射
+iching_analyzer/gua_calculator.py  ← 6根K线滑动窗口 → 阴阳爻映射
     │
     ▼
-hexagram_engine.py  ←  64卦数据库：爻位 → 卦名/释义/看涨等级
+core/hexagram_db.py  ← 64卦数据库：爻位 → 卦名/释义/看涨等级
     │
     ▼
-report_generator.py  ←  生成自包含HTML报告
+iching_analyzer/report_generator.py  ← 生成自包含HTML报告
 ```
 
-### 数据流（全市场筛选）
+### 全市场筛选（hexagram_screener）
 
 ```
 全市场A股 5200+只
     │
     ▼
-screener.py 第1步: MA60周线过滤
-    │  价格在60周均线上方 → 保留约52%
+hexagram_screener/screener.py 第1步: MA60周线过滤
+    │  收盘价 > MA60周线 → 保留约52%
     ▼
-screener.py 第2步: 卦象序列扫描
+hexagram_screener/screener.py 第2步: 卦象序列扫描
     │  日线/周线/月线三维度，检测火地晋→水雷屯等序列
     ▼
-screener.py 第3步: 时间过滤
+hexagram_screener/screener.py 第3步: 时间过滤
     │  只保留最近N天内触发的信号
     ▼
-信号分层: 日线+周线/月线共振 → 优质买点
-         仅日线 → 短期噪音
-         仅周线/月线 → 等待日线买点
+信号分层:
+  日线+周线/月线共振 → 优质买点（优先关注）
+  仅日线 → 短期噪音
+  仅周线/月线 → 等待日线买点
     │
     ▼
-export_to_file → CSV + 代码列表（导入同花顺）
+export_to_file → CSV + 代码列表（可导入同花顺）
 ```
+
+---
 
 ## 卦象映射规则
 
 - **K线 → 爻位**：阳线（收盘 ≥ 开盘）→ 阳爻，阴线（收盘 < 开盘）→ 阴爻
-- **窗口**：6 根 K 线 = 1 个卦象，滑动步长 1
+- **滑动窗口**：6 根 K 线 = 1 个卦象，滑动步长 1
 - **方向**：最旧 K 线 → 上爻，最新 K 线 → 初爻
 - **数据库**：64 卦，每卦含看涨程度评级（1~5星）
+
+---
+
+## 信号分层逻辑
+
+| 分层 | 含义 | 操作建议 |
+|------|------|----------|
+| 日线+周线/月线共振 | 有买点 + 有支撑 | 优先关注，值得深入研究 |
+| 日线+周线+月线三重 | 最强信号 | 重点关注，趋势确认度最高 |
+| 仅日线 | 短期噪音 | 不追，等待周/月线支撑确认 |
+| 仅周线/月线 | 有支撑但无买点 | 放入观察池，等日线信号触发 |
+
+---
 
 ## 技术栈
 
 | 层级 | 技术 |
 |------|------|
-| 数据获取 | mootdx (A股)、Yahoo Finance API (港股/美股) |
+| 数据获取 | mootdx (A股)、Yahoo Finance API (港股/美股)、腾讯/新浪（回退） |
 | 核心逻辑 | Python 3.8+，dataclass 数据结构 |
 | 前端报告 | Chart.js 4.x + chartjs-chart-financial + chartjs-plugin-annotation |
 | 部署 | 自包含 HTML，零服务器依赖 |
 
-## 报告功能
-
-- **K线图**：Candlestick 图表，A 股红涨绿跌配色，带成交量柱状图（双 Y 轴混合图）
-- **卦象标注**：每 6 周期区间上方显示卦名标签
-- **悬停解读**：鼠标悬停 K 线显示所在卦象的详细解读
-- **点击交互**：点击任意 K 线，显示以该线为首的 6 周期卦象面板 + 高亮标注
-- **双表格**：Step1 卦象时间映射表 + Step2 卦象详细解读表
+---
 
 ## 已知限制
 
-- A 股数据依赖 mootdx 服务器，网络不可达时回退到腾讯 K 线 API
+- A股数据依赖 mootdx 服务器，网络不可达时会自动回退到腾讯K线API
 - 美股/港股依赖 Yahoo Finance API，可能受地域限制
-- 不支持日线卦象分析（只支持周线/月线）
+- 卦象信号仅供参考，不构成投资建议
+
+---
 
 ## License
 

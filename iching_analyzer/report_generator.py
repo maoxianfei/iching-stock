@@ -5,7 +5,7 @@
 """
 
 import json
-from gua_calculator import GuaAnalysis, GuaResult
+from iching_analyzer.gua_calculator import GuaAnalysis, GuaResult
 
 
 def generate_html(analysis: GuaAnalysis) -> str:

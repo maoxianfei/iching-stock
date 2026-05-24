@@ -2,6 +2,8 @@
 六十四卦完整数据库 — 包含卦名、卦象符号、卦义、行情解读
 编码规则: 6-bit 整数, bit0=初爻, bit5=上爻, 阳爻=1 阴爻=0
 K线映射: 最旧K线→上爻, 最新K线→初爻 (反序映射)
+
+本模块为纯数据层，不依赖任何业务逻辑，可被所有子系统共享调用。
 """
 
 from dataclasses import dataclass
@@ -43,6 +45,23 @@ _TRIGRAMS = {
     "坎": ("☵", (0, 1, 0)),  # 阴阳阴
     "艮": ("☶", (0, 0, 1)),  # 阴阴阳
     "坤": ("☷", (0, 0, 0)),  # 阴阴阴
+}
+
+# 八卦编码表 (bit0=初爻, bit1=中爻, bit2=上爻)
+TRIGRAM_NAMES = {
+    0b111: "乾☰",
+    0b110: "兑☱",
+    0b101: "离☲",
+    0b100: "震☳",
+    0b011: "巽☴",
+    0b010: "坎☵",
+    0b001: "艮☶",
+    0b000: "坤☷",
+}
+
+TRIGRAM_ELEMENTS = {
+    0b111: "天", 0b110: "泽", 0b101: "火", 0b100: "雷",
+    0b011: "风", 0b010: "水", 0b001: "山", 0b000: "地",
 }
 
 
@@ -284,6 +303,7 @@ _HEXAGRAM_DATA = [
      1),
 ]
 
+
 # ============================================================
 # 构建查找表
 # ============================================================
@@ -293,7 +313,6 @@ def _build_lookup() -> dict[int, Hexagram]:
     lookup = {}
     for lower, upper, name, meaning, interpretation, bullish in _HEXAGRAM_DATA:
         h = _make_hexagram(lower, upper, name, meaning, interpretation, bullish)
-        # 去重：山地剥 出现在两个位置（艮坤 和 艮坤实际上是同一个），取第一个
         if h.index not in lookup:
             lookup[h.index] = h
     return lookup
@@ -326,6 +345,30 @@ def get_hexagram(yao_bits: int) -> Hexagram:
         raise ValueError(f"未找到卦象: {yao_bits}")
 
     return _HEXAGRAM_LOOKUP[yao_bits]
+
+
+def get_hexagram_info(yao_bits: int) -> tuple[str, str, str]:
+    """
+    根据 yao_bits (0~63) 返回 (卦名, 上卦名, 下卦名) — 轻量查询
+    """
+    if 0 <= yao_bits <= 63 and yao_bits in _HEXAGRAM_LOOKUP:
+        h = _HEXAGRAM_LOOKUP[yao_bits]
+        # 从卦象数据反推上下卦名
+        upper_bits = (yao_bits >> 3) & 0b111
+        lower_bits = yao_bits & 0b111
+        upper_name = _trigram_name_from_bits(upper_bits)
+        lower_name = _trigram_name_from_bits(lower_bits)
+        return h.name, upper_name, lower_name
+    return "未知", "未知", "未知"
+
+
+def _trigram_name_from_bits(bits: int) -> str:
+    """3-bit → 八卦名"""
+    _BIT_TO_NAME = {
+        0b111: "乾", 0b110: "兑", 0b101: "离", 0b100: "震",
+        0b011: "巽", 0b010: "坎", 0b001: "艮", 0b000: "坤",
+    }
+    return _BIT_TO_NAME.get(bits, "未知")
 
 
 def get_all_hexagrams() -> list[Hexagram]:
