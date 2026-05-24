@@ -1,7 +1,11 @@
 # K线卦象分析系统
 
 A股/港股/美股 K线 → 易经六十四卦 映射分析系统。
-支持**单股深度分析**（HTML交互报告）和**全市场批量筛选**（CSV导出）两大子系统。
+
+包含三大子系统：
+- **iching_analyzer**：单股深度分析（HTML交互报告）
+- **hexagram_screener**：全市场卦象批量筛选（CSV导出）
+- **backtest**：策略回测系统（MA粘合 + 易经K线形态 + 胜率统计）
 
 ---
 
@@ -21,11 +25,26 @@ A股/港股/美股 K线 → 易经六十四卦 映射分析系统。
 ```
 iching-stock/
 ├── main.py                      # 统一CLI入口（路由到子系统）
+├── backtest/                    # ★ 回测系统（新增）
+│   ├── __init__.py
+│   ├── runner.py               # CLI入口（screen/backtest/batch）
+│   ├── strategy_base.py        # 策略基类 + FilterResult/ScreenResult
+│   ├── strategies/
+│   │   ├── __init__.py
+│   │   ├── ma_convergence.py   # MA粘合策略
+│   │   └── yijing.py           # 易经K线形态策略
+│   ├── engine.py               # 两阶段筛选引擎（ThreadPoolExecutor）
+│   ├── backtester.py          # 通用回测核心（胜率/收益统计）
+│   ├── output.py               # 控制台打印 + Excel导出
+│   └── scheduler.py            # 定时调度（交易日14:30触发）
+│
 ├── core/                        # 核心共享模块（跨子系统复用）
 │   ├── models.py                # KLine 数据模型 + 市场识别
 │   ├── hexagram_db.py           # 64卦数据库 + 看涨等级 + 查询API
 │   ├── hexagram_mapper.py       # K线→爻位映射 + 滑动窗口 + 序列检测
-│   └── data_fetcher.py          # 统一数据拉取层（A股+港股+美股，日/周/月）
+│   ├── data_fetcher.py          # 统一数据拉取层（A股+港股+美股）
+│   ├── indicators.py            # ★ 技术指标库（MA/偏离度/粘合/涨停/爆量）
+│   └── config.py                # ★ 全局配置（并发/输出/调度参数）
 │
 ├── iching_analyzer/             # 易经个股模块（单股深度分析 + HTML报告）
 │   ├── main.py                  # 子系统入口
@@ -211,6 +230,79 @@ export_to_file → CSV + 代码列表（可导入同花顺）
 - A股数据依赖 mootdx 服务器，网络不可达时会自动回退到腾讯K线API
 - 美股/港股依赖 Yahoo Finance API，可能受地域限制
 - 卦象信号仅供参考，不构成投资建议
+- 回测系统依赖 akshare 获取股票列表和东方财富实时行情（可选）
+
+---
+
+## 回测系统（backtest/）
+
+基于 a_stock_screener 移植的策略回测框架，支持：
+- **两阶段筛选**：pre_filter 粗筛（快）+ analyze 精筛（慢，并发）
+- **策略框架**：`BaseStrategy` 基类，可插拔新策略
+- **回测引擎**：指定筛选日 + 验证日，统计胜率/平均收益/最大盈亏
+- **批量回测**：多日期区间自动回测
+
+### 安装额外依赖
+
+```bash
+pip install akshare openpyxl tqdm
+```
+
+### 策略列表
+
+| 策略名 | 说明 |
+|--------|------|
+| `ma_convergence` | MA粘合：跌幅区间 + MA10偏离 + 均线粘合 + MA趋势 + 涨停/爆量信号 |
+| `yijing` | 易经选股：K线阴阳形态序列匹配（支持严格/模糊/滑动窗口） |
+
+### 实时筛选
+
+```bash
+# MA粘合策略筛选
+python backtest/runner.py screen --strategy ma_convergence
+
+# 易经策略筛选（自定义形态）
+python backtest/runner.py screen --strategy yijing --pattern 阳阴阳阴阴阴阳
+
+# 导出Excel
+python backtest/runner.py screen --strategy ma_convergence --export
+```
+
+### 单次回测
+
+```bash
+# 在 2026-05-14 筛选，2026-05-15 验证收益
+python backtest/runner.py backtest \
+  --strategy ma_convergence \
+  --screen-date 20260514 \
+  --verify-date 20260515
+
+# 易经策略回测（只抽样100只快速验证）
+python backtest/runner.py backtest \
+  --strategy yijing \
+  --screen-date 20260514 \
+  --pattern 阳阴阳阴阴阴阳 \
+  --sample 100
+```
+
+### 批量回测
+
+```bash
+# 2026年5月全月，每1个交易日验证
+python backtest/runner.py batch \
+  --strategy ma_convergence \
+  --start 20260501 \
+  --end 20260531 \
+  --offset 1
+```
+
+### 定时调度
+
+```python
+# 在 Python 中调用
+from backtest.scheduler import run_scheduled
+run_scheduled(strategy_name="ma_convergence")  # 每个交易日 14:30 触发
+```
 
 ---
 
