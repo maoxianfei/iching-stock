@@ -40,19 +40,58 @@ python main.py AAPL -i weekly -n 120 -o output/apple.html
 | `-n, --count` | K线数量 | `24` |
 | `-o, --output` | 输出路径 | `output/{symbol}_{interval}_{timestamp}.html` |
 
+### 全市场卦象筛选
+
+```bash
+cd hexagram-screener
+
+# 全市场扫描（最近90天 + 导出CSV）
+python main.py --days 90 --export
+
+# 全市场扫描（最近1年，不导出）
+python main.py --days 365
+
+# 单股三维度扫描
+python main.py --single 600021
+```
+
+筛选参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `--days` | 时间过滤窗口（天） | `365` |
+| `--export` | 导出数据文件（CSV+代码列表） | 不导出 |
+| `--output-dir` | 导出目录 | `output/` |
+| `--single` | 单股扫描模式，指定股票代码 | 全市场 |
+
+导出文件说明：
+
+| 文件 | 内容 | 用途 |
+|------|------|------|
+| `resonance_codes.txt` | 共振股票代码（每行一个） | 导入同花顺自选股 |
+| `resonance_detail.csv` | 共振股详情（代码/名称/各维度信号数/区间/价格） | Excel对照分析 |
+| `all_signals.csv` | 全部信号（按维度分块，结束时间倒序） | 完整数据备用 |
+
 ## 项目架构
 
 ```
 iching-stock/
-├── main.py              # CLI 入口，四步流程编排
-├── data_fetcher.py      # 统一数据获取层（mootdx / Yahoo）
-├── gua_calculator.py    # K线 → 卦象滑动窗口计算
-├── hexagram_engine.py   # 六十四卦数据库与查询
-├── report_generator.py  # 自包含 HTML 报告生成器
-└── output/              # 生成的 HTML 报告
+├── main.py              # 入口程序 — 单股分析，四步流程编排（拉数据→算卦象→查释义→生成报告）
+├── data_fetcher.py      # 数据获取层 — mootdx拉A股 / Yahoo拉港股美股，自动识别市场
+├── gua_calculator.py    # 卦象计算器 — 6根K线滑动窗口，阳线→阳爻、阴线→阴爻，映射64卦
+├── hexagram_engine.py   # 六十四卦数据库 — 64卦完整数据（卦名/释义/投资解读/看涨等级）
+├── report_generator.py  # 报告生成器 — 自包含HTML交互报告（Chart.js烛台图+卦象标注+点击面板）
+│
+├── hexagram-screener/   # 【全市场卦象筛选系统】— 三步漏斗批量扫描
+│   ├── main.py          # 筛选入口 — 全市场扫描 / 单股扫描 / 数据导出（CLI参数控制）
+│   ├── screener.py      # 筛选核心 — MA60周线过滤→卦象序列扫描→时间过滤 + 信号分层 + CSV导出
+│   ├── hexagram_engine.py  # 卦象引擎 — 64卦计算 + 序列检测（如火地晋→水雷屯）
+│   └── data_fetcher.py  # 数据拉取 — mootdx并发拉取A股日线/周线/月线K线
+│
+└── output/              # 输出目录 — HTML报告 + 导出的CSV数据（.gitignore排除）
 ```
 
-### 数据流
+### 数据流（单股分析）
 
 ```
 股票代码 + 周期
@@ -68,6 +107,29 @@ hexagram_engine.py  ←  64卦数据库：爻位 → 卦名/释义/看涨等级
     │
     ▼
 report_generator.py  ←  生成自包含HTML报告
+```
+
+### 数据流（全市场筛选）
+
+```
+全市场A股 5200+只
+    │
+    ▼
+screener.py 第1步: MA60周线过滤
+    │  价格在60周均线上方 → 保留约52%
+    ▼
+screener.py 第2步: 卦象序列扫描
+    │  日线/周线/月线三维度，检测火地晋→水雷屯等序列
+    ▼
+screener.py 第3步: 时间过滤
+    │  只保留最近N天内触发的信号
+    ▼
+信号分层: 日线+周线/月线共振 → 优质买点
+         仅日线 → 短期噪音
+         仅周线/月线 → 等待日线买点
+    │
+    ▼
+export_to_file → CSV + 代码列表（导入同花顺）
 ```
 
 ## 卦象映射规则
