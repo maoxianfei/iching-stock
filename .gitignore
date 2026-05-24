@@ -13,8 +13,9 @@ build/
 *.swp
 *.swo
 
-# 输出报告
+# 输出报告（根目录及子目录）
 output/
+**/output/
 
 # 临时/测试文件
 test_chart.html
